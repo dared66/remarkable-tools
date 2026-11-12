@@ -1,0 +1,17 @@
+.state/
+downloads/
+dist/
+.venv/
+.venv-*/
+__pycache__/
+*.pyc
+.DS_Store
+.env
+.env.*
+credentials.json
+client_secret*.json
+*oauth-client*.json
+*.pem
+*.key
+id_ed25519*
+id_rsa*

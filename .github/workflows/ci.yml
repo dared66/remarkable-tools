@@ -1,0 +1,23 @@
+name: reMail checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: mail/go.mod
+          cache-dependency-path: mail/go.sum
+      - name: Backend checks
+        working-directory: mail
+        run: |
+          go test ./...
+          go vet ./...
+      - name: Account and Keychain adapter checks (fake services only)
+        run: python3 -m unittest discover -s mail/tests
+      - name: ARMv7 compilation
+        working-directory: mail
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -mod=readonly -trimpath -buildvcs=false -o /tmp/remarkmail-arm ./cmd/remarkmail
