@@ -50,7 +50,8 @@ Host remarkable-usb
 
 Confirm `ssh -F .state/ssh_config remarkable-usb 'uname -m'` reports `armv7l`.
 Leave normal SSH host-key checking enabled. The account-transfer step needs
-key authentication, because its input pipe carries account data.
+key authentication, because its input pipe carries account data. The setup tool
+requires the previously verified host key and disables SSH agent forwarding.
 
 ## 2. Download and install the app
 

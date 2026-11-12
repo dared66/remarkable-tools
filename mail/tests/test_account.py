@@ -18,6 +18,61 @@ spec.loader.exec_module(account)
 
 
 class AccountTests(unittest.TestCase):
+    def test_uses_app_keychain_adapter_even_if_unrelated_module_is_installed(self):
+        scripts = str(Path(account.__file__).parent)
+        unrelated = types.SimpleNamespace(CredentialError=Exception,
+            load_record=lambda *args: self.fail("Unrelated storage backend used"),
+            save_record=lambda *args: self.fail("Unrelated storage backend used"))
+        with patch.object(account.sys, "path", [scripts] + account.sys.path), \
+             patch.dict(account.sys.modules, {"skill_credentials": unrelated}):
+            _, load, save = account.keychain()
+        self.assertEqual(load.__module__, "credential_store")
+        self.assertEqual(save.__module__, "credential_store")
+
+    def test_invalid_keychain_record_does_not_start_remote_write(self):
+        for record in ({}, {"client_id": "fake-client"}):
+            with self.subTest(record=record), \
+                 patch.object(account.Path, "is_file", return_value=True), \
+                 patch.object(account, "keychain", return_value=(Exception, lambda *args: record, None)), \
+                 patch.object(account.subprocess, "Popen") as ssh:
+                with self.assertRaises(account.SetupError):
+                    account.install_credentials("default")
+                ssh.assert_not_called()
+
+    def test_keychain_failure_does_not_start_remote_write(self):
+        def missing(*args):
+            raise account.SetupError("Account access missing")
+        with patch.object(account.Path, "is_file", return_value=True), \
+             patch.object(account, "keychain", return_value=(Exception, missing, None)), \
+             patch.object(account.subprocess, "Popen") as ssh:
+            with self.assertRaises(account.SetupError):
+                account.install_credentials("default")
+            ssh.assert_not_called()
+
+    def test_account_transfer_uses_private_pipe_and_known_device_key(self):
+        record = {"client_id": "fake-client", "client_secret": "fake-config",
+            "access_token": "fake-access", "refresh_token": "fake-refresh",
+            "email": "test@example.com", "expiry": "1900000000"}
+        process = unittest.mock.Mock(returncode=0)
+        process.poll.return_value = 0
+        output = io.StringIO()
+        with patch.object(account.Path, "is_file", return_value=True), \
+             patch.object(account, "keychain", return_value=(Exception, lambda *args: record, None)), \
+             patch.object(account.subprocess, "Popen", return_value=process) as ssh, \
+             contextlib.redirect_stdout(output):
+            account.install_credentials("default")
+        command = ssh.call_args.args[0]
+        self.assertIn("StrictHostKeyChecking=yes", command)
+        self.assertIn("BatchMode=yes", command)
+        self.assertIn("ForwardAgent=no", command)
+        self.assertEqual(ssh.call_args.kwargs["stdin"], account.subprocess.PIPE)
+        self.assertEqual(ssh.call_args.kwargs["stdout"], account.subprocess.DEVNULL)
+        self.assertEqual(ssh.call_args.kwargs["stderr"], account.subprocess.DEVNULL)
+        encoded = process.communicate.call_args.args[0]
+        self.assertEqual(json.loads(encoded)["refresh_token"], record["refresh_token"])
+        for key in ("refresh_token", "access_token", "client_secret", "email"):
+            self.assertNotIn(record[key], " ".join(command) + output.getvalue())
+
     def test_connect_uses_pkce_validates_state_and_saves_only_in_keychain(self):
         observed, saved, errors = {}, [], []
 

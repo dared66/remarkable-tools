@@ -1,0 +1,54 @@
+name: Security checks
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: '17 15 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: mail/go.mod
+          cache: false
+      - name: Install pinned secret scanner
+        run: go install github.com/zricethezav/gitleaks/v8@v8.30.1
+      - name: Scan complete history with redacted output
+        run: gitleaks git --redact --no-banner --log-opts=--all .
+  dependencies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: mail/go.mod
+          cache-dependency-path: mail/go.sum
+      - name: Install pinned Go vulnerability checker
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+      - name: Check tablet dependencies and reachable code
+        working-directory: mail
+        env:
+          CGO_ENABLED: '0'
+          GOOS: linux
+          GOARCH: arm
+          GOARM: '7'
+        run: govulncheck ./...
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+      - name: Check setup and build dependencies
+        run: |
+          python -m pip install pip-audit==2.10.1
+          python -m pip_audit -r mail/requirements-setup.txt -r mail/requirements-build.txt

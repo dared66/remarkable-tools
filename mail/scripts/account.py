@@ -26,15 +26,13 @@ class SetupError(Exception):
 
 
 def keychain():
+    # Always use this app's explicit macOS Keychain adapter. An unrelated
+    # skill_credentials module may select a different credential backend.
     try:
-        from skill_credentials import CredentialError, load_record, save_record
+        from credential_store import CredentialError, load_record, save_record
         return CredentialError, load_record, save_record
     except ImportError:
-        try:
-            from credential_store import CredentialError, load_record, save_record
-            return CredentialError, load_record, save_record
-        except ImportError:
-            raise SetupError("Install mail/requirements-setup.txt in a virtual environment first.") from None
+        raise SetupError("Install mail/requirements-setup.txt in a virtual environment first.") from None
 
 
 def google_json(url, *, form=None, token=None):
@@ -129,19 +127,31 @@ def install_credentials(account):
     config = ROOT / ".state/ssh_config"
     if not config.is_file():
         raise SetupError("The existing tablet SSH configuration is missing.")
-    # Start SSH before Keychain retrieval. Credentials go only through the private
-    # pipe into SSH, never argv, environment, tool output, or a local file.
+    # Validate the Keychain record before starting a remote write, so a missing
+    # or damaged record cannot replace an existing connection with empty input.
+    record = load_record(SERVICE, account)
+    try:
+        credentials = {key: record[key] for key in
+            ("client_id", "client_secret", "refresh_token", "access_token", "email")}
+        if not all(isinstance(value, str) and value for value in credentials.values()):
+            raise ValueError()
+        credentials["expiry"] = int(record["expiry"])
+        if credentials["expiry"] <= 0:
+            raise ValueError()
+        wire = json.dumps(credentials).encode()
+    except (KeyError, TypeError, ValueError):
+        raise SetupError("Saved account access is incomplete. Connect Gmail again before transferring it.") from None
+    # Credentials go only through the private SSH pipe, never argv,
+    # environment, tool output, or a local file. Require the known device key.
     command = "umask 077; mkdir -p /home/root/.remarkmail && chmod 700 /home/root/.remarkmail && " \
         "remarkmail_tmp=$(mktemp /home/root/.remarkmail/.credentials-XXXXXX) && " \
         "trap 'rm -f \"$remarkmail_tmp\"' EXIT && " \
         "cat > \"$remarkmail_tmp\" && chmod 600 \"$remarkmail_tmp\" && " \
         "mv \"$remarkmail_tmp\" /home/root/.remarkmail/credentials.json"
-    process = subprocess.Popen(["/usr/bin/ssh", "-F", str(config), "remarkable-usb", command], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    process = subprocess.Popen(["/usr/bin/ssh", "-o", "StrictHostKeyChecking=yes", "-o", "BatchMode=yes",
+        "-o", "ForwardAgent=no", "-F", str(config), "remarkable-usb", command], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
-        record = load_record(SERVICE, account)
-        credentials = {key:record[key] for key in ("client_id", "client_secret", "refresh_token", "access_token", "email")}
-        credentials["expiry"] = int(record["expiry"])
-        process.communicate(json.dumps(credentials).encode(), timeout=35)
+        process.communicate(wire, timeout=35)
         if process.returncode:
             raise SetupError("Could not install account access. Check the tablet connection and retry.")
     finally:
