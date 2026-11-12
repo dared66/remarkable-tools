@@ -129,7 +129,9 @@ python3 mail/scripts/device_live_check.py
 
 - **Update:** save drafts and close reMail, verify the new release checksum, then
   repeat step 2 with its extracted `RemarkMail` directory. Close and reopen it
-  to load the new interface. Account data is stored separately and is preserved.
+  to load the new interface. If a release changes the backend, restart the tablet
+  and activate XOVI through your usual launcher so the old idle backend is replaced.
+  Account data is stored separately and is preserved.
 - **Google sign-in expires:** repeat step 4. If the project is still in Testing,
   seven-day expiry is expected. Other revocation/expiry reasons still apply in
   Production. See [Google's token policy](https://developers.google.com/identity/protocols/oauth2#expiration).
