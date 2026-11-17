@@ -4,12 +4,15 @@ Small, independent apps for the reMarkable tablet, by Krupa Poobala-Chandran.
 
 | Tool | What it does | Status |
 | --- | --- | --- |
+| [reFinder](finder/) | Browse My files, Obsidian vaults, and device files offline. | Tested on reMarkable 2; build from source |
 | [reMail](mail/) | Read Gmail, write replies, and keep local drafts on reMarkable 2. | Experimental; downloadable ARMv7 release |
 
 Start with the **[reMail installation guide](mail/INSTALL.md)** or the
 **[latest reMail release](https://github.com/dared66/remarkable-tools/releases/tag/remail-v0.1.0)**.
 The [website](https://krupapc.dev/apps/remail/) has the same setup overview,
 privacy policy, and terms.
+
+reFinder was checked on reMarkable 2, firmware 3.29.1.0: My files listing, document details, and refreshing the on-device view passed. It uses the same AppLoad and XOVI setup as reMail.
 
 reMarkdown will join this collection later. It is not included in this release.
 

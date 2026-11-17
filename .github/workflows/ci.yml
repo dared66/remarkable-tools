@@ -1,4 +1,4 @@
-name: reMail checks
+name: Tool checks
 on: [push, pull_request]
 permissions:
   contents: read
@@ -23,3 +23,9 @@ jobs:
       - name: ARMv7 compilation
         working-directory: mail
         run: CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -mod=readonly -trimpath -buildvcs=false -o /tmp/remarkmail-arm ./cmd/remarkmail
+      - name: reFinder backend checks and ARMv7 compilation
+        working-directory: finder
+        run: |
+          go test ./...
+          go vet ./...
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -mod=readonly -trimpath -buildvcs=false -o /tmp/refinder-arm .
