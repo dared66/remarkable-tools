@@ -37,11 +37,14 @@ type Params struct {
 }
 
 type App struct {
-	Root   *Store
-	Store  *Store
-	Client *Client
-	Demo   bool
-	Email  string
+	Root     *Store
+	Store    *Store
+	Client   *Client
+	backend  mailBackend
+	identity string
+	standard bool
+	Demo     bool
+	Email    string
 }
 
 func NewApp(dir string, demo bool) (*App, error) {
@@ -60,17 +63,30 @@ func (a *App) account() error {
 	var cr Credentials
 	_ = a.Root.Read("credentials.json", &cr)
 	email := cr.Email
+	identity := strings.ToLower(email)
+	a.standard = cr.Protocol == "imap" && !a.Demo
+	a.backend = a.Client
+	if a.standard {
+		var cfg IMAPAccount
+		if err := a.Root.Read("credentials.json", &cfg); err != nil || cfg.Email != email {
+			return fmt.Errorf("Could not read mail account")
+		}
+		a.backend = cfg
+		identity = "imap/" + cfg.Incoming + "/" + cfg.Username + "/" + identity
+	}
 	if a.Demo {
 		email = "preview@example.com"
+		identity = email
 	}
-	if a.Store != nil && a.Email == email {
+	if a.Store != nil && a.identity == identity {
 		return nil
 	}
+	a.identity = identity
 	a.Email = email
 	a.Client.ExpectedEmail = email
 	key := "unconnected"
 	if email != "" {
-		h := sha256.Sum256([]byte(strings.ToLower(email)))
+		h := sha256.Sum256([]byte(identity))
 		key = hex.EncodeToString(h[:16])
 	}
 	s, err := NewStore(filepath.Join(a.Root.Dir, "accounts", key))
@@ -82,7 +98,7 @@ func (a *App) account() error {
 
 func (a *App) configured() bool {
 	var cr Credentials
-	return a.Demo || (a.Root.Read("credentials.json", &cr) == nil && cr.RefreshToken != "" && cr.ClientID != "" && cr.Email != "")
+	return a.Demo || a.standard || (a.Root.Read("credentials.json", &cr) == nil && cr.RefreshToken != "" && cr.ClientID != "" && cr.Email != "")
 }
 
 func (a *App) Handle(req Request) Response {
@@ -127,10 +143,10 @@ func newID() string {
 
 func (a *App) perform(ctx context.Context, action string, p Params) (any, error) {
 	if action == "status" {
-		return map[string]any{"configured": a.configured(), "email": a.Email, "demo": a.Demo}, nil
+		return map[string]any{"configured": a.configured(), "email": a.Email, "demo": a.Demo, "imap": a.standard}, nil
 	}
 	if !a.configured() {
-		return nil, fmt.Errorf("Connect Gmail using the setup tool on your Mac")
+		return nil, fmt.Errorf("Connect your mail account using the setup tool on your Mac")
 	}
 	switch action {
 	case "list":
@@ -139,7 +155,7 @@ func (a *App) perform(ctx context.Context, action string, p Params) (any, error)
 		}
 		var old cachedListing
 		cached := a.Store.Read(cacheKey(p), &old) == nil
-		list, err := a.Client.List(ctx, p.Folder, p.Query, p.Page)
+		list, err := a.backend.List(ctx, p.Folder, p.Query, p.Page)
 		if err != nil && cached {
 			old.Cached = true
 			old.Warning = err.Error()
@@ -159,7 +175,7 @@ func (a *App) perform(ctx context.Context, action string, p Params) (any, error)
 		if a.Demo {
 			return demoThread(p.ID), nil
 		}
-		thread, err := a.Client.Thread(ctx, p.ID)
+		thread, err := a.backend.Thread(ctx, p.ID)
 		if err != nil {
 			if a.Store.Read("thread-"+p.ID+".json", &thread) == nil {
 				thread.Cached = true
@@ -175,7 +191,7 @@ func (a *App) perform(ctx context.Context, action string, p Params) (any, error)
 		if a.Demo {
 			return map[string]bool{"updated": true}, nil
 		}
-		if err := a.Client.Modify(ctx, p.ID, p.Operation); err != nil {
+		if err := a.backend.Modify(ctx, p.ID, p.Operation); err != nil {
 			return nil, err
 		}
 		a.updateCaches(p.ID, p.Operation)
@@ -199,7 +215,7 @@ func (a *App) perform(ctx context.Context, action string, p Params) (any, error)
 			return nil, fmt.Errorf("Could not open draft")
 		}
 		if d.State != "draft" {
-			return nil, fmt.Errorf("Keep this delivery record until you have checked Sent in Gmail")
+			return nil, fmt.Errorf("Keep this delivery record until you have checked your sent mail")
 		}
 		if err = os.Remove(filepath.Join(a.Store.Dir, "draft-"+p.ID+".json")); err != nil {
 			return nil, fmt.Errorf("Could not delete draft")
@@ -221,7 +237,7 @@ func (a *App) send(ctx context.Context, p Params) (any, error) {
 		return nil, fmt.Errorf("Could not open the saved draft")
 	}
 	if d.State != "draft" {
-		return nil, fmt.Errorf("This message may already have been sent. Check Sent in Gmail")
+		return nil, fmt.Errorf("This message may already have been sent. Check your sent mail")
 	}
 	if d.Revision != p.Revision {
 		return nil, fmt.Errorf("The draft changed. Save and review it before sending")
@@ -239,7 +255,7 @@ func (a *App) send(ctx context.Context, p Params) (any, error) {
 	}
 	remote, uncertain, err := "preview-delivery", false, error(nil)
 	if !a.Demo {
-		remote, uncertain, err = a.Client.Send(ctx, d, a.Email)
+		remote, uncertain, err = a.backend.Send(ctx, d, a.Email)
 	}
 	if err != nil {
 		if uncertain {
@@ -248,19 +264,19 @@ func (a *App) send(ctx context.Context, p Params) (any, error) {
 			d.State = "draft"
 		}
 		if a.Store.Write("draft-"+d.ID+".json", d) != nil {
-			return nil, fmt.Errorf("Delivery status could not be saved. Check Sent in Gmail before trying again")
+			return nil, fmt.Errorf("Delivery status could not be saved. Check your sent mail before trying again")
 		}
 		if uncertain {
-			return nil, fmt.Errorf("Delivery is uncertain. Check Sent in Gmail before sending another copy")
+			return nil, fmt.Errorf("Delivery is uncertain. Check your sent mail before sending another copy")
 		}
 		return nil, err
 	}
 	d.State = "sent"
 	d.RemoteID = remote
 	if a.Store.Write("draft-"+d.ID+".json", d) != nil {
-		return nil, fmt.Errorf("Gmail accepted this email, but its receipt could not be saved. Check Sent; do not send again")
+		return nil, fmt.Errorf("The mail server accepted this email, but its receipt could not be saved. Check Sent; do not send again")
 	}
-	return map[string]any{"sent": true, "demo": a.Demo}, nil
+	return map[string]any{"sent": true, "demo": a.Demo, "imap": a.standard}, nil
 }
 
 func (a *App) updateCaches(id, operation string) {

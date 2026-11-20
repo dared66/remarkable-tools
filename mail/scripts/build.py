@@ -34,7 +34,7 @@ def main():
     # A simple envelope icon, drawn as native vector geometry before PNG export.
     # Icon rendering happens in the same PySide environment as resource compilation.
     subprocess.run([qt_python, str(Path(__file__).with_name("icon.py")), str(PACKAGE / "icon.png")], check=True, env=dict(os.environ, QT_QPA_PLATFORM="offscreen"))
-    module_dirs = subprocess.check_output([go, "list", "-m", "-f", "{{.Dir}}", "golang.org/x/net", "golang.org/x/text"], cwd=SOURCE, env=env, text=True).splitlines()
+    module_dirs = subprocess.check_output([go, "list", "-m", "-f", "{{.Dir}}", "github.com/emersion/go-imap", "github.com/emersion/go-message", "github.com/emersion/go-sasl", "golang.org/x/net", "golang.org/x/text"], cwd=SOURCE, env=env, text=True).splitlines()
     goroot = subprocess.check_output([go, "env", "GOROOT"], env=env, text=True).strip()
     notices = [("Go standard library/runtime", Path(goroot) / "LICENSE")]
     notices.extend((Path(directory).name, Path(directory) / "LICENSE") for directory in module_dirs)

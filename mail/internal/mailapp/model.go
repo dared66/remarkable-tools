@@ -11,6 +11,7 @@ import (
 )
 
 type Credentials struct {
+	Protocol     string `json:"protocol,omitempty"`
 	ClientID     string `json:"client_id"`
 	ClientSecret string `json:"client_secret"`
 	RefreshToken string `json:"refresh_token"`
@@ -175,7 +176,7 @@ func (s *Store) SaveDraft(d Draft) (Draft, error) {
 			return d, fmt.Errorf("Could not read the saved draft; it has been preserved")
 		}
 		if old.State != "draft" {
-			return old, fmt.Errorf("This draft has already been submitted. Check Sent in Gmail")
+			return old, fmt.Errorf("This draft has already been submitted. Check your sent mail")
 		}
 		if d.Revision <= old.Revision {
 			return old, nil

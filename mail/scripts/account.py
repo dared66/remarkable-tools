@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
-"""Connect Gmail through a local browser and retain credentials in macOS Keychain."""
+"""Connect a mail account and transfer its settings to reMail."""
 import argparse
 import base64
 import hashlib
+import getpass
+import imaplib
+import smtplib
+import ssl
+from email.utils import parseaddr
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 from pathlib import Path
@@ -122,6 +127,54 @@ def connect(client_path, account, open_browser=True):
     print("Gmail connected and saved in macOS Keychain. No mail was sent or modified.")
 
 
+def connect_imap(args):
+    if not sys.stdin.isatty():
+        raise SetupError("Run account setup in a local Terminal.")
+    gmail = args.gmail
+    if gmail and (args.imap_host or args.smtp_host):
+        raise SetupError("Use either the Gmail preset or custom server names.")
+    incoming = "imap.gmail.com" if gmail else args.imap_host
+    outgoing = "smtp.gmail.com" if gmail else args.smtp_host
+    if not incoming or not outgoing:
+        raise SetupError("Provide both server names or use --gmail.")
+    if not all(1 <= port <= 65535 for port in (args.imap_port, args.smtp_port)):
+        raise SetupError("Choose valid server ports.")
+    if parseaddr(args.email)[1] != args.email or "@" not in args.email:
+        raise SetupError("Enter a single email address.")
+    username = args.username or args.email
+    print(f"Checking IMAP at {incoming}:{args.imap_port} and SMTP at {outgoing}:{args.smtp_port}.")
+    password = getpass.getpass("Mail provider app password: ")
+    if not password:
+        raise SetupError("Enter your mail provider's app password.")
+    context = ssl.create_default_context()
+    mode = args.smtp_mode or ("starttls" if args.smtp_port == 587 else "tls")
+    try:
+        with imaplib.IMAP4_SSL(incoming, args.imap_port, ssl_context=context, timeout=20) as mailbox:
+            mailbox.login(username, password)
+            if mailbox.select("INBOX", readonly=True)[0] != "OK":
+                raise SetupError("The IMAP account could not open Inbox.")
+        if mode == "tls":
+            smtp = smtplib.SMTP_SSL(outgoing, args.smtp_port, context=context, timeout=20)
+        else:
+            smtp = smtplib.SMTP(outgoing, args.smtp_port, timeout=20)
+        with smtp:
+            if mode == "starttls":
+                smtp.starttls(context=context)
+            smtp.ehlo()
+            smtp.user, smtp.password = username, password
+            smtp.auth("PLAIN", smtp.auth_plain)
+    except (OSError, imaplib.IMAP4.error, smtplib.SMTPException, ValueError):
+        raise SetupError("Could not verify both servers. Check the app password, server names, ports and TLS settings.") from None
+    _, _, save = keychain()
+    def endpoint(host, port):
+        return f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+    save(SERVICE, args.account, dict(protocol="imap", username=username, email=args.email,
+         password=password, incoming=endpoint(incoming, args.imap_port), outgoing=endpoint(outgoing, args.smtp_port),
+         smtp_mode=mode, sent_folder=args.sent_folder or ("[Gmail]/Sent Mail" if gmail else "Sent"),
+         archive_folder=args.archive_folder or ("[Gmail]/All Mail" if gmail else "Archive")))
+    print("Both servers accepted the credentials. Account saved in Mac Keychain.")
+
+
 def install_credentials(account):
     _, load_record, _ = keychain()
     config = ROOT / ".state/ssh_config"
@@ -131,13 +184,21 @@ def install_credentials(account):
     # or damaged record cannot replace an existing connection with empty input.
     record = load_record(SERVICE, account)
     try:
-        credentials = {key: record[key] for key in
-            ("client_id", "client_secret", "refresh_token", "access_token", "email")}
+        if record.get("protocol") == "imap":
+            fields = ("protocol", "email", "username", "password", "incoming", "outgoing",
+                      "smtp_mode", "sent_folder", "archive_folder")
+            credentials = {key: record[key] for key in fields}
+            if credentials["smtp_mode"] not in ("tls", "starttls"):
+                raise ValueError()
+        else:
+            fields = ("client_id", "client_secret", "refresh_token", "access_token", "email")
+            credentials = {key: record[key] for key in fields}
         if not all(isinstance(value, str) and value for value in credentials.values()):
             raise ValueError()
-        credentials["expiry"] = int(record["expiry"])
-        if credentials["expiry"] <= 0:
-            raise ValueError()
+        if record.get("protocol") != "imap":
+            credentials["expiry"] = int(record["expiry"])
+            if credentials["expiry"] <= 0:
+                raise ValueError()
         wire = json.dumps(credentials).encode()
     except (KeyError, TypeError, ValueError):
         raise SetupError("Saved account access is incomplete. Connect Gmail again before transferring it.") from None
@@ -148,6 +209,21 @@ def install_credentials(account):
         "trap 'rm -f \"$remarkmail_tmp\"' EXIT && " \
         "cat > \"$remarkmail_tmp\" && chmod 600 \"$remarkmail_tmp\" && " \
         "mv \"$remarkmail_tmp\" /home/root/.remarkmail/credentials.json"
+    if record.get("protocol") == "imap":
+        # Refuse disk-backed /run. Only a symlink, never the app password, goes on flash.
+        command = """set -eu
+umask 077
+test "$(stat -f -c %T /run)" = tmpfs
+mkdir -p /run/remarkmail /home/root/.remarkmail
+chmod 700 /run/remarkmail /home/root/.remarkmail
+tmp=$(mktemp /run/remarkmail/.account-XXXXXX)
+stage=$(mktemp -d /home/root/.remarkmail/.link-XXXXXX)
+trap 'rm -f "$tmp" "$stage/link"; rmdir "$stage"' EXIT
+cat > "$tmp"
+test -s "$tmp"
+ln -s /run/remarkmail/account.json "$stage/link"
+mv -f "$tmp" /run/remarkmail/account.json
+mv -f "$stage/link" /home/root/.remarkmail/credentials.json"""
     process = subprocess.Popen(["/usr/bin/ssh", "-o", "StrictHostKeyChecking=yes", "-o", "BatchMode=yes",
         "-o", "ForwardAgent=no", "-F", str(config), "remarkable-usb", command], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
@@ -164,8 +240,18 @@ def install_credentials(account):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
-    sign_in = sub.add_parser("connect", help="Sign in through the Mac browser and save tokens in Keychain")
-    sign_in.add_argument("--client", required=True, help="Downloaded Google OAuth Desktop client JSON")
+    sign_in = sub.add_parser("connect", help="Verify IMAP and SMTP and save account access in Keychain")
+    sign_in.add_argument("--client", help=argparse.SUPPRESS)
+    sign_in.add_argument("--email")
+    sign_in.add_argument("--gmail", action="store_true")
+    sign_in.add_argument("--username")
+    sign_in.add_argument("--imap-host")
+    sign_in.add_argument("--imap-port", type=int, default=993)
+    sign_in.add_argument("--smtp-host")
+    sign_in.add_argument("--smtp-port", type=int, default=465)
+    sign_in.add_argument("--smtp-mode", choices=("tls", "starttls"))
+    sign_in.add_argument("--sent-folder")
+    sign_in.add_argument("--archive-folder")
     sign_in.add_argument("--account", default="default")
     sign_in.add_argument("--no-browser", action="store_true", help="Print the sign-in URL instead of launching the default browser")
     status = sub.add_parser("status", help="Report configured status without exposing credentials")
@@ -176,7 +262,12 @@ def main():
     try:
         credential_error, load_record, _ = keychain()
         if args.command == "connect":
-            connect(args.client, args.account, open_browser=not args.no_browser)
+            if args.client:
+                connect(args.client, args.account, open_browser=not args.no_browser)
+            elif args.email:
+                connect_imap(args)
+            else:
+                parser.error("connect requires --email and either --gmail or custom server names")
         elif args.command == "install":
             install_credentials(args.account)
         else:

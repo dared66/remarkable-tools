@@ -8,7 +8,8 @@ not guarantee that experimental software has no defects.
 
 ## Data handling
 
-- OAuth uses the system browser, PKCE, random session state, and a temporary
+- IMAP setup verifies TLS certificates for both mail servers. The Mac stores the app password in Keychain. The tablet stores it under a private directory on tmpfs until reboot. Root processes can read an active password.
+- Legacy OAuth uses the system browser, PKCE, random session state, and a temporary
   callback bound to `127.0.0.1`. The Mac uses this app's explicit Keychain adapter,
   with no plaintext or environment credential-store fallback.
 - Account transfer requires a known SSH host key and key authentication, with
@@ -19,16 +20,13 @@ not guarantee that experimental software has no defects.
   files.** Root access or physical storage access may expose them. Other tablet
   extensions running as root share this trust boundary.
 - Messages render as plain text. Scripts, remote images, tracking pixels, and
-  attachments are not downloaded or executed. Mailbox data goes directly to
-  Google, not to a developer backend, analytics service, or AI.
+  attachments are never opened or executed (the bounded IMAP message preview may contain attachment bytes). Mailbox data goes directly to
+  the configured mail provider, not to a developer backend, analytics service, or AI.
 - Sending requires confirmation. Uncertain delivery is recorded rather than
   retried automatically. Revoking Google access does not erase local copies.
 
 See the [privacy policy](https://krupapc.dev/apps/remail/privacy/) and
 [removal instructions](mail/INSTALL.md#updates-removal-and-troubleshooting).
-The shared Gmail-access review is separate from source publication; the current
-release uses the installer's own Desktop OAuth client.
-
 ## Publication checks
 
 Never publish `.state/`, Keychain exports, account credentials, access or refresh

@@ -19,6 +19,7 @@ Rectangle {
     readonly property color rule: "#c7c7c7"
     readonly property real gutter: 52 * u
     property string mode: "loading"
+    property bool imapAccount: false
     property string folder: "inbox"
     property string account: ""
     property bool demo: false
@@ -112,7 +113,7 @@ Rectangle {
     function initialize() {
         rpc("status", {}, function(ok, result) {
             if (!ok) { mode = "setup"; return; }
-            configured = result.configured; account = result.email || ""; demo = result.demo;
+            imapAccount = !!result.imap; configured = result.configured; account = result.email || ""; demo = result.demo;
             mode = configured ? "list" : "setup";
             if (configured) loadMailbox(false);
         });
@@ -155,7 +156,7 @@ Rectangle {
             if (!ok) return;
             conversation = result; mode = "thread"; reader.contentY = 0;
             notice = (result.cached ? "Offline copy · Saved " + formatDate(result.updated) : "")
-                + (result.shortened ? "  Showing the latest messages. Long content has been shortened; open Gmail for the full conversation." : "");
+                + (result.shortened ? "  Showing the latest messages. Long content has been shortened; open your mail app for the full conversation." : "");
         });
     }
     function modify(operation) {
@@ -176,7 +177,7 @@ Rectangle {
         draftSubject.text = value.subject || ""; draftBody.text = value.body || "";
         mode = "compose"; composer.contentY = 0; settingDraft = false; inputTarget = draftBody;
         hideKeyboard();
-        if (value.state !== "draft") notice = "Delivery uncertain. Check Sent in Gmail before sending another copy.";
+        if (value.state !== "draft") notice = "Delivery uncertain. Check your sent mail before sending another copy.";
     }
     function newDraft(reply) {
         if (busy) return;
@@ -282,7 +283,7 @@ Rectangle {
                 var task=root.pending[key];
                 if (Date.now()-task.at < 65000) continue;
                 delete root.pending[key]; if (task.blocking) root.busy=false;
-                root.notice=task.action==="send" ? "Delivery is uncertain. Check Sent in Gmail before sending another copy." : "The mail service did not respond. Try reopening Mail.";
+                root.notice=task.action==="send" ? "Delivery is uncertain. Check your sent mail before sending another copy." : "The mail service did not respond. Try reopening Mail.";
                 if (task.done) task.done(false, null);
             }
         }
@@ -313,7 +314,7 @@ Rectangle {
         RowLayout {
             visible: root.mode==="list"; Layout.fillWidth:true; spacing:8*root.u
             Repeater {
-                model:[{key:"inbox",label:"Inbox"},{key:"starred",label:"Starred"},{key:"sent",label:"Sent"},{key:"all",label:"All mail"},{key:"drafts",label:"Drafts"}]
+                model:[{key:"inbox",label:"Inbox"},{key:"starred",label:root.imapAccount ? "Inbox stars" : "Starred"},{key:"sent",label:"Sent"},{key:"all",label:root.imapAccount ? "Archive" : "All mail"},{key:"drafts",label:"Drafts"}]
                 InkButton { required property var modelData; text:modelData.label; selected:root.folder===modelData.key; enabled:!root.busy; onClicked:root.chooseFolder(modelData.key) }
             }
             Item { Layout.fillWidth:true }
@@ -327,7 +328,7 @@ Rectangle {
         }
         RowLayout {
             visible:root.mode==="list" && root.searchVisible; Layout.fillWidth:true; spacing:12*root.u
-            MailField { id:searchBox; objectName:"searchBox"; Layout.fillWidth:true; placeholderText:"Search Gmail"; enabled:!root.busy; onAccepted:{ root.query=text; root.hideKeyboard(); root.loadMailbox(false); } }
+            MailField { id:searchBox; objectName:"searchBox"; Layout.fillWidth:true; placeholderText:"Search mail"; enabled:!root.busy; onAccepted:{ root.query=text; root.hideKeyboard(); root.loadMailbox(false); } }
             InkButton { text:"Keyboard"; selected:root.keyboardRequested; onClicked:{root.inputTarget=searchBox;root.toggleKeyboard();} }
             InkButton { text:"Find"; enabled:!root.busy; onClicked:{root.query=searchBox.text;root.hideKeyboard();root.loadMailbox(false);} }
         }
@@ -343,7 +344,7 @@ Rectangle {
             Column {
                 anchors.centerIn:parent; width:parent.width*0.82; spacing:30*root.u
                 Text { width:parent.width; text:root.mode==="loading" ? "Opening your inbox…" : "Your inbox, on paper."; font.family:"EB Garamond"; font.pixelSize:64*root.u; color:root.ink; horizontalAlignment:Text.AlignHCenter; wrapMode:Text.Wrap }
-                Text { width:parent.width; text:"Connect your Gmail account using the setup tool on your Mac. Once connected, Mail works directly over this tablet’s Wi-Fi."; visible:root.mode==="setup"; font.family:"Noto Sans"; font.pixelSize:31*root.u; color:root.muted; horizontalAlignment:Text.AlignHCenter; wrapMode:Text.Wrap }
+                Text { width:parent.width; text:"Connect your mail account using the setup tool on your Mac. Once connected, Mail works directly over this tablet’s Wi-Fi."; visible:root.mode==="setup"; font.family:"Noto Sans"; font.pixelSize:31*root.u; color:root.muted; horizontalAlignment:Text.AlignHCenter; wrapMode:Text.Wrap }
                 InkButton { anchors.horizontalCenter:parent.horizontalCenter; text:"Check connection"; visible:root.mode==="setup"; enabled:!root.busy; onClicked:root.initialize() }
             }
         }
@@ -392,7 +393,7 @@ Rectangle {
                 required property string state
                 width:draftList.width; height:215*root.u
                 Column { anchors.fill:parent; anchors.topMargin:30*root.u; spacing:12*root.u
-                    Text { text:draftRow.state==="draft" ? "To: "+(draftRow.to || "Add a recipient") : "Check delivery in Gmail"; width:parent.width; elide:Text.ElideRight; font.family:"Noto Sans"; font.pixelSize:25*root.u; color:root.muted; textFormat:Text.PlainText }
+                    Text { text:draftRow.state==="draft" ? "To: "+(draftRow.to || "Add a recipient") : "Check delivery in your mail app"; width:parent.width; elide:Text.ElideRight; font.family:"Noto Sans"; font.pixelSize:25*root.u; color:root.muted; textFormat:Text.PlainText }
                     Text { text:draftRow.subject || "Untitled draft"; width:parent.width; elide:Text.ElideRight; font.family:"EB Garamond"; font.pixelSize:44*root.u; color:root.ink; textFormat:Text.PlainText }
                     Text { text:draftRow.body; width:parent.width; maximumLineCount:1; elide:Text.ElideRight; font.family:"Noto Sans"; font.pixelSize:27*root.u; color:root.muted; textFormat:Text.PlainText }
                 }
@@ -427,7 +428,7 @@ Rectangle {
                         Text { width:parent.width; text:modelData.from; wrapMode:Text.Wrap; font.family:"Noto Sans"; font.pixelSize:28*root.u; font.weight:Font.DemiBold; color:root.ink; textFormat:Text.PlainText }
                         Text { width:parent.width; text:root.formatDate(modelData.date)+"\nTo: "+modelData.to; wrapMode:Text.Wrap; font.family:"Noto Sans"; font.pixelSize:24*root.u; color:root.muted; textFormat:Text.PlainText }
                         Text { width:parent.width; text:modelData.body; wrapMode:Text.Wrap; font.family:"EB Garamond"; font.pixelSize:37*root.u*root.readingScale; lineHeight:1.25; color:root.ink; textFormat:Text.PlainText }
-                        Text { width:parent.width; visible:(modelData.attachments || []).length>0; text:"Attachments: "+(modelData.attachments || []).join(", ")+"\nOpen attachments in Gmail on your phone or computer."; wrapMode:Text.Wrap; font.family:"Noto Sans"; font.pixelSize:25*root.u; color:root.muted; textFormat:Text.PlainText }
+                        Text { width:parent.width; visible:(modelData.attachments || []).length>0; text:"Attachments: "+(modelData.attachments || []).join(", ")+"\nOpen attachments in your mail app on your phone or computer."; wrapMode:Text.Wrap; font.family:"Noto Sans"; font.pixelSize:25*root.u; color:root.muted; textFormat:Text.PlainText }
                     }
                 }
             }
@@ -483,7 +484,7 @@ Rectangle {
             Column {
                 id:confirmationContent; anchors.centerIn:parent; width:parent.width-96*root.u; spacing:30*root.u
                 Text {width:parent.width; text:root.privacyVisible ? "Privacy & support" : root.sendConfirmation ? "Send this email?" : "Discard this draft?"; font.family:"EB Garamond"; font.pixelSize:60*root.u; color:root.ink; wrapMode:Text.Wrap}
-                Text {width:parent.width; text:root.privacyVisible ? "reMail connects directly to Gmail to read, send, and organize the mail you choose. Sending always requires confirmation.\n\nMessages and drafts are cached on this tablet. Credentials are stored in a private, unencrypted tablet file; the Mac setup tool uses Keychain. reMail does not send mailbox data to a developer server, advertising service, or AI model.\n\nYou can revoke access in Google Account connections. Revoking access does not delete local cached copies.\n\nRead the full policy on your phone or computer:\nhttps://krupapc.dev/apps/remail/privacy/\n\nSupport: krupa@krupapc.dev" : root.sendConfirmation ? "To: "+draftTo.text+(draftCC.text ? "\nCc: "+draftCC.text : "")+"\n\n"+(draftSubject.text || "(No subject)") : "This removes the draft saved on this tablet."; font.family:"Noto Sans"; font.pixelSize:30*root.u; color:root.muted; wrapMode:Text.Wrap; textFormat:Text.PlainText}
+                Text {width:parent.width; text:root.privacyVisible ? "reMail connects directly to your mail provider to read, send, and organize the mail you choose. Sending always requires confirmation.\n\nMessages and drafts are cached on this tablet. IMAP setup keeps the app password in Mac Keychain and tablet memory until reboot. Older Gmail OAuth connections use a private tablet file. Cached messages and drafts are unencrypted. reMail does not send mailbox data to a developer server, advertising service, or AI model.\n\nYou can revoke access in your mail provider’s account settings. Revoking access does not delete local cached copies.\n\nRead the full policy on your phone or computer:\nhttps://krupapc.dev/apps/remail/privacy/\n\nSupport: krupa@krupapc.dev" : root.sendConfirmation ? "To: "+draftTo.text+(draftCC.text ? "\nCc: "+draftCC.text : "")+"\n\n"+(draftSubject.text || "(No subject)") : "This removes the draft saved on this tablet."; font.family:"Noto Sans"; font.pixelSize:30*root.u; color:root.muted; wrapMode:Text.Wrap; textFormat:Text.PlainText}
                 Row {
                     spacing:20*root.u
                     InkButton {objectName:"cancelConfirmation"; text:root.privacyVisible ? "Done" : "Keep editing"; onClicked:{root.sendConfirmation=false;root.deleteConfirmation=false;root.privacyVisible=false;}}

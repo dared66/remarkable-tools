@@ -5,7 +5,7 @@ firmware 3.29.1.0, AppLoad 0.6.0, XOVI 0.3.3, and qt-resource-rebuilder 19.0.1**
 The ARMv7 download is not for Paper Pro or Paper Pro Move. Firmware updates can
 break unofficial apps. Keep important drafts backed up elsewhere.
 
-The tablet uses Wi-Fi to talk directly to Gmail. A **Mac with Python 3.10+** is
+The tablet connects to your provider over IMAP and SMTP using Wi-Fi. A **Mac with Python 3.10+** is
 currently needed for account setup. It can be disconnected after setup.
 
 ## 1. Prepare AppLoad and SSH
@@ -56,7 +56,7 @@ requires the previously verified host key and disables SSH agent forwarding.
 ## 2. Download and install the app
 
 Download **RemarkMail-rm2.tar.gz** and **SHA256SUMS.txt** from
-[reMail v0.1.0](https://github.com/dared66/remarkable-tools/releases/tag/remail-v0.1.0)
+[reMail v0.2.0 preview](https://github.com/dared66/remarkable-tools/releases/tag/remail-v0.2.0-rc1)
 into `downloads/` in the clone. This is a prebuilt app; Go and Qt are not needed
 to install it.
 
@@ -71,60 +71,44 @@ ssh -F .state/ssh_config remarkable-usb 'chmod 755 /home/root/xovi/exthome/applo
 ```
 
 Stop if the checksum fails or the AppLoad directory is missing. Refresh AppLoad's
-launcher and open **reMail**. A Gmail connection screen is expected until step 4.
+launcher and open **reMail**. New installations show the account connection screen. The IMAP release has been tested with local TLS mail servers and cross-built for ARMv7. The ARM backend passed a synthetic AppLoad socket check on a physical reMarkable 2. Live IMAP/SMTP provider testing is pending.
 
-## 3. Create your own Gmail connection
+## 3. Connect your mailbox
 
-No shared OAuth client, account, or developer Gmail access is bundled. Each
-installer uses their **own Google Cloud project and Desktop OAuth client**.
-
-1. Open [Google Cloud Console](https://console.cloud.google.com/), create or select
-   a project, and enable **Gmail API**. Billing is not needed for this app's setup.
-2. Open Google Auth Platform. Set an app name, support email, developer contact,
-   and **External** audience. For personal testing, add your Gmail address as a
-   test user. Review and accept Google's policies yourself.
-3. Under Data Access, add only
-   `https://www.googleapis.com/auth/gmail.modify`. It permits reading, sending,
-   and changing labels without immediate permanent deletion. The app provides
-   no message-delete action.
-4. Create a **Desktop app** client under Clients. Download the JSON and save it
-   as `.state/gmail-client.json`. Run `chmod 600 .state/gmail-client.json`.
-5. Testing-issued refresh tokens normally expire after seven days. For ongoing
-   personal use, configure Production in your project, supply the branding
-   information Google requests, and sign in again after switching. Use branding
-   and domains you own; this project's website is not your verified domain.
-   [Google's personal-use exception](https://developers.google.com/identity/protocols/oauth2/production-readiness/restricted-scope-verification#personal-use)
-   allows limited personal use without verification, with an unverified warning
-   and user cap. Publicly offering a shared OAuth service needs Google's
-   applicable verification. This source release does not provide that service.
-
-Do not commit your client JSON, tokens, SSH keys, or mail. The ignored `.state/`
-directory is for local configuration, not publication.
-
-## 4. Sign in and transfer account access
-
-Run from the repository root in a normal Mac Terminal:
+In the cloned repository, create the Mac setup environment:
 
 ```sh
 python3 -m venv .venv
 .venv/bin/python -m pip install -r mail/requirements-setup.txt
-.venv/bin/python mail/scripts/account.py connect --client .state/gmail-client.json
+```
+
+For a personal Gmail account with two-step verification and [App Passwords](https://support.google.com/accounts/answer/185833) available, generate a password for reMail and run:
+
+```sh
+.venv/bin/python mail/scripts/account.py connect --gmail --email you@gmail.com
+```
+
+Type the app password at the hidden prompt. This setup needs no Google Cloud project. Some managed accounts and accounts with Advanced Protection cannot create app passwords.
+
+For another provider, substitute its server names, mailbox address, and exact folder names. IMAP uses implicit TLS on port 993. SMTP uses implicit TLS on 465 by default, or required STARTTLS on 587. The server must accept IMAP login and SMTP AUTH PLAIN over TLS; OAuth-only accounts are unsupported on this path.
+
+```sh
+.venv/bin/python mail/scripts/account.py connect --email you@example.org \
+  --imap-host imap.example.org --smtp-host smtp.example.org --smtp-port 587 \
+  --sent-folder Sent --archive-folder Archive
+```
+
+Use `--username` when the login differs from the email address. Gmail defaults to English folder names; override them for localized mailboxes. Setup verifies both logins without sending a message and saves the account in Mac Keychain.
+
+## 4. Transfer the account and open reMail
+
+Close reMail before switching accounts. Save any open draft first. With the tablet connected over USB, run:
+
+```sh
 .venv/bin/python mail/scripts/account.py install
 ```
 
-Complete Google's sign-in and Gmail consent yourself in the browser. The tool
-uses PKCE and a temporary loopback callback. It stores credentials in macOS
-Keychain and transfers them directly through SSH; it does not write a local
-token file. A Keychain access prompt may appear. The Mac setup tool supports
-macOS only and refuses a plaintext credential-store fallback.
-
-Open reMail and tap **Check connection** or **Refresh**. You should see your
-Gmail inbox. Afterward the Mac and USB cable are not required; keep tablet Wi-Fi
-connected. The optional read-only check reports counts without mail content:
-
-```sh
-python3 mail/scripts/device_live_check.py
-```
+Open reMail, tap **Check connection**, and refresh Inbox over Wi-Fi. The password stays in a private file in the tablet's RAM-backed /run directory. After a tablet reboot, rerun the install command to restore access from Keychain. Messages and drafts remain in account-specific storage. Switching from the older OAuth setup starts a separate IMAP cache and draft list.
 
 ## Updates, removal, and troubleshooting
 
@@ -133,23 +117,19 @@ python3 mail/scripts/device_live_check.py
   to load the new interface. If a release changes the backend, restart the tablet
   and activate XOVI through your usual launcher so the old idle backend is replaced.
   Account data is stored separately and is preserved.
-- **Google sign-in expires:** repeat step 4. If the project is still in Testing,
-  seven-day expiry is expected. Other revocation/expiry reasons still apply in
-  Production. See [Google's token policy](https://developers.google.com/identity/protocols/oauth2#expiration).
+- **Password revoked:** create a replacement with your mail provider and repeat steps 3 and 4.
 - **SSH fails:** reconnect/unlock the tablet, check its address and key, and test
   `ssh -F .state/ssh_config remarkable-usb` interactively first. Do not paste
   credentials into an issue.
 - **Inbox will not refresh:** verify Wi-Fi and tablet date/time. The app may show
   cached messages while offline. Read the visible error before reconnecting.
-- **Uncertain send:** check Gmail's Sent folder before sending another copy.
+- **Uncertain send:** check the sending account before retrying; some SMTP providers do not save a Sent copy before sending another copy.
 - **Remove:** close reMail and remove only its application directory,
   `/home/root/xovi/exthome/appload/RemarkMail`. This preserves local drafts and
   cached mail at `/home/root/.remarkmail`. To remove those too, deliberately
   remove that separate directory after backing up anything you want to keep.
   Delete the `local.skills.remarkable-mail` / `default` entry in macOS Keychain
-  Access and revoke the app at [Google Account connections](https://myaccount.google.com/connections).
+  Access and revoke the app password with your provider. Reboot to clear the tablet password.
   Revoking access does not erase existing local copies.
 
-Tablet credentials have mode `0600` and the state directory mode `0700`, but are
-**not encrypted by reMail**. Keep the device secure. See the
-[privacy policy](https://krupapc.dev/apps/remail/privacy/).
+Cached mail and drafts are private files, unencrypted on the tablet. A process with root access can read them and the active session password.
